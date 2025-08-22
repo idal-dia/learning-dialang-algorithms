@@ -8,3 +8,5 @@ This repo contains implementations of various algorithms that will become parts 
 With increasing complexity :
 
 - IC/Basic.elm
+- IC/Chruch.elm
+- IC/HVM2.elm
