@@ -1,5 +1,8 @@
 module Lexer.IntMath exposing (..)
 
+{-| This lexer is made to tokenize simple integer math operations.
+-}
+
 import Parser as P exposing ((|.), (|=), Parser)
 
 
