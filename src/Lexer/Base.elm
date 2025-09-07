@@ -1,4 +1,4 @@
-module Lexer.Base exposing (IsGhost, Token(..), parser)
+module Lexer.Base exposing (Token(..), parser)
 
 {-| This lexer forms generic tokens that might be used for a basic implementation of Dialang's syntax.
 -}
@@ -7,16 +7,11 @@ import Parser as P exposing ((|.), (|=), Parser)
 
 
 type Token
-    = LName IsGhost String
-    | UName IsGhost String
+    = Name { isUpper : Bool, isGhost : Bool } String
     | Int Int
     | Float Float
     | Symbol String
     | Spacing
-
-
-type alias IsGhost =
-    Bool
 
 
 name : Parser Token
@@ -29,10 +24,10 @@ name =
                     |> Maybe.map Char.isLower
                     |> Maybe.withDefault False
             then
-                ( LName, c )
+                ( \g -> Name { isUpper = False, isGhost = g }, c )
 
             else
-                ( UName, c )
+                ( \g -> Name { isUpper = True, isGhost = g }, c )
     in
     P.succeed
         (\isGhost ( toToken, head ) body ->

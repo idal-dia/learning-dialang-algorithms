@@ -18,7 +18,7 @@ suite =
         \_ ->
             Expect.equal
                 (P.run L.parser "124/7*3|> map 74")
-                (Ok [ Int 124, Symbol "/", Int 7, Symbol "*", Int 3, Symbol "|>", Spacing, LName False "map", Spacing, Int 74 ])
+                (Ok [ Int 124, Symbol "/", Int 7, Symbol "*", Int 3, Symbol "|>", Spacing, Name { isUpper = False, isGhost = False } "map", Spacing, Int 74 ])
     , Test.test "find_index" <|
         \_ ->
             let
@@ -28,33 +28,33 @@ suite =
 """
 
                 tokens =
-                    [ LName False "find_index"
+                    [ Name { isUpper = False, isGhost = False } "find_index"
                     , Spacing
                     , Symbol ":"
                     , Spacing
                     , Symbol "("
-                    , LName False "a"
+                    , Name { isUpper = False, isGhost = False } "a"
                     , Spacing
                     , Symbol "->"
                     , Spacing
-                    , UName False "Bool"
+                    , Name { isUpper = True, isGhost = False } "Bool"
                     , Symbol "),"
                     , Spacing
-                    , UName False "List"
+                    , Name { isUpper = True, isGhost = False } "List"
                     , Symbol "("
-                    , LName False "a"
+                    , Name { isUpper = False, isGhost = False } "a"
                     , Symbol ")"
                     , Spacing
                     , Symbol "->"
                     , Spacing
                     , Symbol "{"
                     , Spacing
-                    , UName False "Int"
+                    , Name { isUpper = True, isGhost = False } "Int"
                     , Spacing
                     , Symbol "|"
                     , Spacing
                     , Symbol "?"
-                    , LName False "not_found"
+                    , Name { isUpper = False, isGhost = False } "not_found"
                     , Spacing
                     , Symbol "}"
                     , Spacing
