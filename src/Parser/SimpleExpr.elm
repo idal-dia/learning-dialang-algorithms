@@ -74,34 +74,37 @@ type alias NEList a =
 
 expr : Parser Expr
 expr =
-    term False
+    expr_ False
 
 
 exprBlock : Parser Expr
 exprBlock =
-    term True
+    expr_ True
 
 
-term : Bool -> Parser Expr
-term isBlock =
-    P.oneOf
-        [ val
-        , num
-        , placeholder
-        , error
-        , P.lazy (\_ -> tag)
-        , P.lazy (\_ -> struct)
-        ]
+expr_ : Bool -> Parser Expr
+expr_ isBlock =
+    [ val
+    , num
+    , placeholder
+    , error
+    , P.lazy (\_ -> tag)
+    , P.lazy (\_ -> struct)
+    ]
+        |> P.oneOf
         |> P.andThen
             (\previous ->
-                P.lazy (\_ -> app previous)
-                    :: (if isBlock then
-                            []
-
-                        else
-                            [ P.lazy (\_ -> binop previous) ]
-                       )
-                    ++ [ P.succeed previous ]
+                [ P.lazy (\_ -> app previous)
+                , P.succeed previous
+                ]
+                    |> P.oneOf
+            )
+        |> P.andThen
+            (\previous ->
+                [ P.lazy (\_ -> binop previous)
+                    |> P.backtrackable
+                , P.succeed previous
+                ]
                     |> P.oneOf
             )
 
@@ -157,28 +160,39 @@ name isValidFirstChar =
 num : Parser Expr
 num =
     let
-        num_ isNegative =
-            let
-                neg =
-                    if isNegative then
-                        negate
+        sign isNegative =
+            if isNegative then
+                negate
 
-                    else
-                        identity
+            else
+                identity
+
+        intOrFloat float =
+            let
+                trunc =
+                    truncate float
             in
-            P.number
-                { int = Just (neg >> E_Int)
-                , hex = Nothing
-                , octal = Nothing
-                , binary = Nothing
-                , float = Just (neg >> E_Float)
-                }
+            if toFloat trunc == float then
+                E_Int trunc
+
+            else
+                E_Float float
+
+        number isNegative =
+            [ P.symbol "."
+                -- this case is to avoid recognizing ".12" as a float
+                |. P.problem "floating point numbers must start with a digit, like 0.25"
+                |> P.map (always (E_Int 0))
+            , P.map (sign isNegative >> intOrFloat) P.float
+            ]
+                |> P.oneOf
+                |> P.backtrackable
     in
     P.oneOf
         [ P.succeed identity
             |. P.symbol "-"
-            |= num_ True
-        , num_ False
+            |= number True
+        , number False
         ]
 
 
@@ -188,11 +202,17 @@ placeholder =
         |> P.map (always E_Placeholder)
 
 
+{-| here binops are always right associative
+-}
 binop : Expr -> Parser Expr
 binop previous =
     let
         isValidBinopChar c =
-            not (isSpace c || Char.isAlphaNum c)
+            let
+                reserved =
+                    ".,()[]{}\"'`#?$@_" |> String.toList
+            in
+            not (isSpace c || Char.isAlphaNum c || List.member c reserved)
     in
     P.succeed (E_Binop previous)
         |. P.spaces
@@ -249,7 +269,7 @@ construct =
 
 structElems : Maybe arg -> Parser (List (E_StructElem arg))
 structElems canBeVar =
-    P.succeed (::)
+    [ P.succeed (::)
         |= structElem canBeVar
         |= ((\acc ->
                 [ P.succeed (\e -> e :: acc |> P.Loop)
@@ -263,64 +283,93 @@ structElems canBeVar =
             )
                 |> P.loop []
            )
+    , P.succeed []
+    ]
+        |> P.oneOf
 
 
 structElem : Maybe arg -> Parser (E_StructElem arg)
 structElem canBeVar =
     let
-        var =
-            case canBeVar of
-                Nothing ->
-                    []
-
-                Just yes ->
-                    [ P.succeed (\lname_ -> E_Var yes lname_ Simple)
+        startWithTilde =
+            Maybe.map
+                (\yes ->
+                    P.succeed identity
                         |. P.symbol "~"
-                        |= lname
-                    , P.succeed (\lname_ -> E_Var yes lname_ (Field Nothing))
-                        |. P.symbol "~."
-                        |= lname
-                    , P.succeed (\lname_ lname2_ -> E_Var yes lname_ (Field (Just lname2_)))
-                        |. P.symbol "."
-                        |= lname
+                        |= P.oneOf
+                            [ P.succeed (\lname_ -> E_Var yes lname_ Simple)
+                                |= lname
+                            , P.succeed (\lname_ -> E_Var yes lname_ (Field Nothing))
+                                |. P.symbol "."
+                                |= lname
+                            ]
+                )
+                canBeVar
+
+        startWithDot =
+            let
+                mutableField =
+                    Maybe.map
+                        (\yes ->
+                            P.succeed (\lname_ -> E_Var yes lname_ (Field Nothing))
+                                |. P.symbol "~"
+                                |= lname
+                        )
+                        canBeVar
+            in
+            P.succeed identity
+                |. P.symbol "."
+                |= oneOfMaybe
+                    [ mutableField
+                    , P.andThen startWithField lname |> Just
+                    , P.succeed E_KeyVal
+                        |. P.symbol "["
+                        |. P.spaces
+                        |= expr
+                        |. P.spaces
+                        |. P.symbol "]"
                         |. P.spaces
                         |. P.symbol "="
                         |. P.spaces
-                        |. P.symbol "~"
-                        |= lname
+                        |= expr
+                        |> Just
+                    , P.succeed E_Extension
+                        |. P.symbol "."
+                        |= P.oneOf
+                            [ exprBlock |> P.map Just
+                            , P.succeed Nothing
+                            ]
+                        |> Just
                     ]
+
+        startWithField lname_ =
+            let
+                mutableField =
+                    Maybe.map
+                        (\yes ->
+                            P.succeed (\lname2_ -> E_Var yes lname_ (Field (Just lname2_)))
+                                |. P.symbol "~"
+                                |= lname
+                        )
+                        canBeVar
+            in
+            [ P.succeed identity
+                |. P.spaces
+                |. P.symbol "="
+                |. P.spaces
+                |= oneOfMaybe
+                    [ mutableField
+                    , P.map (Just >> E_Field lname_) expr |> Just
+                    ]
+            , P.succeed (E_Field lname_ Nothing)
+            ]
+                |> P.oneOf
     in
-    (var
-        ++ [ expr |> P.map E_Expr
-           , P.succeed E_Field
-                |. P.symbol "."
-                |= lname
-                |. P.spaces
-                |. P.symbol "="
-                |. P.spaces
-                |= (expr |> P.map Just)
-           , P.succeed (\lname_ -> E_Field lname_ Nothing)
-                |. P.symbol "."
-                |= lname
-           , P.succeed E_KeyVal
-                |. P.symbol ".["
-                |. P.spaces
-                |= expr
-                |. P.spaces
-                |. P.symbol "]"
-                |. P.spaces
-                |. P.symbol "="
-                |. P.spaces
-                |= expr
-           , P.succeed E_Extension
-                |. P.symbol ".."
-                |= P.oneOf
-                    [ exprBlock |> P.map Just
-                    , P.succeed Nothing
-                    ]
-           ]
-    )
-        |> P.oneOf
+    [ startWithTilde
+    , Just startWithDot
+    , P.map E_Expr expr |> Just
+    ]
+        |> oneOfMaybe
 
 
 
@@ -338,3 +387,8 @@ parenthesized parser =
         |= parser
         |. P.spaces
         |. P.symbol ")"
+
+
+oneOfMaybe =
+    List.filterMap identity
+        >> P.oneOf
